@@ -91,9 +91,11 @@ function usage() {
   #echo "$me <list [known]|install <version>|use <version>>"
   echo "$me commands:"
   printf "%b" "    list                      - shows currently installed Elixirs\n"
-  printf "%b" "    list known                - shows available Elixir releases\n"
-  printf "%b" "    list branches             - shows available Elixir branches\n"
-  printf "%b" "    install <version>         - installs the given release version\n"
+  printf "%b" "    list known                - shows available Elixir official releases\n"
+  printf "%b" "    list branches             - shows available Elixir official branches\n"
+  printf "%b" "    list branches --fork user - shows available Elixir branches in user's fork\n"
+  printf "%b" "    install <version>         - installs the given official release version\n"
+  printf "%b" "    install <version> --fork user - installs the given release version from user's fork \n"
   printf "%b" "    uninstall <version>       - uninstalls the given release version\n"
   printf "%b" "    alias <version> <alias>   - creates an alias for the given version\n"
   printf "%b" "    unalias <alias>           - removes an alias\n"
@@ -447,8 +449,8 @@ function kiex_implode() {
 
 function get_elixir_branches() {
   # TODO: add cache support
-  # x=$(curl -i -H "User-Agent: $USER_AGENT" -H "Accept: application/json" -qs https://api.github.com/repos/elixir-lang/elixir/branches |grep '"name":|ETag:')
-  x=$(\curl -i ${AUTH_HEADER[*]} -H "User-Agent: $USER_AGENT" -H "Accept: application/json" -qs https://api.github.com/repos/elixir-lang/elixir/branches |grep '"name":')
+  # x=$(curl -i -H "User-Agent: $USER_AGENT" -H "Accept: application/json" -qs https://api.github.com/repos/${fork}/elixir/branches |grep '"name":|ETag:')
+  x=$(\curl -i ${AUTH_HEADER[*]} -H "User-Agent: $USER_AGENT" -H "Accept: application/json" -qs "https://api.github.com/repos/${fork}/elixir/branches" |grep '"name":')
   x=$(echo $x | tr ',' '\n' |grep name\":|sed 's/.*name":"\([^"]*\)"/\1/')
   #x=${x//\"name\":/}
   #x=${x//[\",]/}
@@ -458,7 +460,7 @@ function get_elixir_branches() {
 }
 
 function list_branches() {
-  echo "Getting the available branches from https://github.com/elixir-lang/elixir/branches"
+  echo "Getting the available branches from https://github.com/${fork}/elixir/branches"
   echo
   elixir_branches=$(get_elixir_branches)
 
@@ -505,7 +507,7 @@ function get_known_elixir_releases() {
 
 function get_latest_elixir_release() {
   x=$(curl -i ${AUTH_HEADER[*]} -H "User-Agent: $USER_AGENT" -H 'Accept: application/json' -qs https://api.github.com/repos/elixir-lang/elixir/releases/latest | tr ',' '\n' | grep '"tag_name":' | sed -E 's/"tag_name":"v(.+)"$/\1/')
-  
+
   echo "$x"
 }
 
@@ -548,7 +550,7 @@ function valid_branch() {
 }
 
 function exit_on_invalid_version() {
-  version="$1"
+  local version="$1"
 
   if [ ! "$(valid_known_release ${version})" = 0 -a ! "$(valid_branch ${version})" = 0 ] ; then
     echo "Unknown Elixir '$version' ☹ "
@@ -582,7 +584,8 @@ function install_elixir() {
     erlang_min_release_canidate_n=""
   fi
 
-  version="$1"
+  [[ $fork = "elixir-lang" ]] && version="$1" || version="${fork}-$1"
+  ref="$1"
 
   exit_on_invalid_version "$1"
   exit_on_unmet_prereqs
@@ -590,20 +593,20 @@ function install_elixir() {
   install_path="${elixirs_path}/elixir-${version}"
 
   cd "$build_path"
-  echo "Downloading elixir version ${version}"
-  git clone https://github.com/elixir-lang/elixir.git elixir-git 2> /dev/null
-  cd elixir-git
+  echo "Downloading elixir version ${ref} from ${fork}"
+  git clone "https://github.com/${fork}/elixir.git" "${fork}-git" 2> /dev/null
+  cd "${fork}-git"
   echo "Installing elixir version ${version}"
   git checkout -f master
   git fetch -t
   # TODO: deal with conflicts between branches and tags
-  git branch -la |grep -q "origin/${version}"
+  git branch -la |grep -q "origin/${ref}"
   if [ "$?" = 0 ] ; then
-    git checkout -b "${version}" -f "origin/${version}" || git checkout "${version}"
-    git pull origin "${version}"
+    git checkout -b "${ref}" -f "origin/${ref}" || git checkout "${ref}"
+    git pull origin "${ref}"
   else
-    git checkout -b "v${version}" -f "v${version}" || git checkout "v${version}"
-    git pull origin "v${version}"
+    git checkout -b "v${ref}" -f "v${ref}" || git checkout "v${ref}"
+    git pull origin "v${ref}"
   fi
 
   if [ "$SYSTEM" = "FreeBSD" ] ; then
@@ -716,6 +719,11 @@ function create_env_file() {
   new_file="${elixirs_path}/elixir-${new_ver}.env"
   new_path="${elixirs_path}/elixir-${new_ver}/bin"
   new_mix_path="${elixirs_path}/elixir-${new_ver}/ebin"
+
+  echo $new_ver
+  echo $new_file
+  echo $new_path
+  echo $new_mix_path
 
   if [ -f "$new_file" ] ; then
     mv -f "$new_file" "${new_file}.old"
@@ -1025,6 +1033,31 @@ if [ ! "$action" = "setup" ] ; then
 elif [ ! "$action" = "install" -a "$1" = "kiex" ] ; then
   validate_install
 fi
+
+# set default options
+fork="elixir-lang"
+
+# parse options
+POSITIONAL=()
+while [[ $# -gt 0 ]]
+do
+  key="$1"
+
+  case $key in
+    --fork|-f)
+      fork="$2"
+      shift
+      shift
+      ;;
+    *)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+  esac
+done
+
+# restore positional arguments
+set -- "${POSITIONAL[@]}"
 
 case $action in
   list)
